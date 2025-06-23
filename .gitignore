@@ -1,0 +1,14 @@
+PKG-INFO
+__pycache__/
+tests/
+data/
+output/
+slurm/
+log/
+*.egg-info
+*.pyc
+*.log
+*.pt
+*.pth
+*.sh
+*.txt
