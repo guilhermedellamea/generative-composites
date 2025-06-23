@@ -214,7 +214,7 @@ class DDPM_Damage(nn.Module):
             n_samples (int): Number of samples to generate.
             image_shape (tuple): Image shape.
             guide_weight (float): Strength of contrastive guidance.
-            context_extremes (tuple): Range for condition values.
+            context_extremes (tuple): Max and min heatmaps.
 
         Returns:
             Tuple[Tensor, np.ndarray]: Final samples and evolution over time.
