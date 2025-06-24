@@ -3,8 +3,10 @@ import random
 from datetime import datetime
 
 import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.optim as optim
+from matplotlib.colors import ListedColormap
 from torchvision.utils import make_grid
 
 from core.dataloaders import get_dataloaders
@@ -32,11 +34,13 @@ class DDPMTrainer:
             self.input_var = "reinforcement"
             self.label_var = "Ey"
             self.mode = "elastic"
+            should_target_transform = True
         elif self.args.mode == "damage":
             self.dataset = "dataset_damage"
             self.input_var = "reinforcement"
-            self.label_var = "damage"
+            self.label_var = "gradcam"
             self.mode = "damage"
+            should_target_transform = False
         else:
             raise ValueError("Invalid mode")
 
@@ -47,6 +51,7 @@ class DDPMTrainer:
             batch_size=self.args.batch_size,
             num_workers=self.args.num_workers,
             normalize="mean_std",
+            should_target_transform=should_target_transform,
             device=self.device,
         )
         self.train_loader = self.loaders["train"]
@@ -141,8 +146,8 @@ class DDPMTrainer:
                 "gradcam",
             )
             context_extremes = (
-                gradcam_heatmap,
-                gradcam_heatmap * self.args.weight_damage,
+                torch.Tensor(gradcam_heatmap),
+                torch.Tensor(gradcam_heatmap * self.args.weight_damage),
             )
 
         for guide_weight in self.args.guide_weights:
@@ -157,16 +162,13 @@ class DDPMTrainer:
                     guide_weight=guide_weight,
                     context_extremes=context_extremes,
                 )
-                grid = make_grid(samples, nrow=4, normalize=True)
-                fig, ax = plt.subplots(figsize=(8, 8))
-                ax.imshow(grid.cpu().permute(1, 2, 0), cmap="gray")
-                ax.axis("off")
-                save_path = get_saved_figure_path(
-                    f"ddpm_generated_guide_w_{guide_weight}_epoch_{epoch:03d}"
+
+                self.save_ddpm_samples(
+                    samples=samples,
+                    guide_weight=guide_weight,
+                    context_extremes=context_extremes,
+                    epoch=epoch,
                 )
-                plt.savefig(save_path, bbox_inches="tight", dpi=300)
-                plt.close()
-                timed_print(f"[Epoch {epoch}] Sample images saved to {save_path}")
 
     def run(self):
         for epoch in range(self.args.epochs):
@@ -181,6 +183,79 @@ class DDPMTrainer:
                 self.save_samples(epoch + 1)
                 self.save_checkpoint(epoch + 1)
 
+    def save_ddpm_samples(
+        self,
+        samples,
+        guide_weight,
+        context_extremes,
+        epoch,
+    ):
+        """
+        Saves diffusion model samples. If mode is "damage", overlays GradCAM heatmaps.
+
+        Args:
+            samples (torch.Tensor): Generated samples of shape (n_samples, 1, 512, 512)
+            guide_weight (float): Conditioning weight used during sampling.
+            context_extremes (tuple): Tuple of 2 heatmaps (each 512x512), used if mode == "damage".
+            epoch (int): Epoch number (used in filename).
+        """
+        samples = samples.cpu()
+        n_samples = samples.shape[0]
+
+        if self.args.mode == "elastic":
+            grid = make_grid(samples, nrow=4, normalize=True)
+            fig, ax = plt.subplots(figsize=(8, 8))
+            ax.imshow(grid.permute(1, 2, 0), cmap="gray")
+            ax.axis("off")
+            save_path = get_saved_figure_path(
+                f"{self.args.mode}_ddpm_generated_guide_w_{guide_weight}_epoch_{epoch:03d}"
+            )
+            plt.savefig(save_path, bbox_inches="tight", dpi=300)
+            plt.close()
+            timed_print(f"[Epoch {epoch}] Sample images saved to {save_path}")
+
+        elif self.args.mode == "damage":
+            samples_np = samples.squeeze(1).numpy()  # (n_samples, 512, 512)
+
+            # Prepare heatmaps
+            heatmaps = torch.stack([context_extremes[0], context_extremes[1]], dim=0)
+            if n_samples > 2:
+                heatmaps = heatmaps.repeat(n_samples // 2, 1, 1)
+            heatmaps_np = heatmaps.cpu().numpy()
+
+            # Plot each sample + heatmap
+            nrow = 4
+            ncol = int(np.ceil(n_samples / nrow))
+            fig, axes = plt.subplots(ncol, nrow, figsize=(nrow * 2.5, ncol * 2.5))
+
+            for i, ax in enumerate(axes.flat):
+                if i >= n_samples:
+                    ax.axis("off")
+                    continue
+
+                ax.imshow(
+                    samples_np[i],
+                    cmap=ListedColormap(["white", "black"]),
+                    interpolation="none",
+                )
+                ax.imshow(
+                    heatmaps_np[i],
+                    cmap="jet",
+                    alpha=0.5,
+                    interpolation="none",
+                    vmin=0,
+                    vmax=1,
+                )
+                ax.axis("off")
+
+            plt.tight_layout()
+            save_path = get_saved_figure_path(
+                f"{self.args.mode}_ddpm_overlayed_w_{guide_weight}_epoch_{epoch:03d}"
+            )
+            plt.savefig(save_path, bbox_inches="tight", dpi=300)
+            plt.close()
+            timed_print(f"[Epoch {epoch}] Overlaid samples saved to {save_path}")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="DDPM Trainer")
@@ -188,7 +263,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--batch-size-validation", type=int, default=16)
     parser.add_argument("--n_sample", type=int, default=4)
-    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--lr", type=float, default=0.0001)
@@ -199,15 +274,15 @@ if __name__ == "__main__":
     parser.add_argument("--norm", type=str, default="instance")
     parser.add_argument("--ndown", type=int, default=2)
     parser.add_argument(
-        "--mode", type=str, choices=["elastic", "damage"], default="elastic"
+        "--mode", type=str, choices=["elastic", "damage"], default="damage"
     )
     parser.add_argument("--sample_each_epoch", type=int, default=10)
     parser.add_argument("--guide_weights", type=list, default=[0.0, 0.5, 4.0])
     parser.add_argument("--weight_damage", type=float, default=0.1)
 
-    args = parser.parse_args([])
+    args = parser.parse_args()
     timed_print(f"Training DDPM started at {datetime.now()}")
 
-    self = DDPMTrainer(args)
+    trainer = DDPMTrainer(args)
 
-    self.run()
+    trainer.run()

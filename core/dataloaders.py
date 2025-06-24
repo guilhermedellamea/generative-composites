@@ -172,6 +172,7 @@ def get_dataloaders(
     num_workers: int,
     device: torch.device,
     normalize: str = "mean_std",
+    should_target_transform: bool = True,
     seed: int = 1903,
     return_id: bool = False,
 ) -> Tuple[Dict[str, DataLoader], Dict[str, torch.Tensor]]:
@@ -184,33 +185,37 @@ def get_dataloaders(
     # split the single dataset
     splits = split_simulations(dataset)
 
-    # compute statistics for the single label
-    values = [
-        load_data(dataset, simulation_id, label_var)
-        for simulation_id in splits["train"]
-    ]
-    arr = np.array(values)
-    label_stats = {
-        "mean": torch.tensor(arr.mean()),
-        "std": torch.tensor(arr.std()),
-        "min": torch.tensor(arr.min()),
-        "max": torch.tensor(arr.max()),
-        "splits": splits,
-    }
-
     # prepare transforms
     in_transforms: List[Callable] = []
     if normalize == "mean_std":
         in_transforms.append(transforms.Normalize([0.5], [0.5]))
     input_transform = transforms.Compose(in_transforms) if in_transforms else None
 
-    target_transform = get_normalizer(
-        normalize,
-        label_stats["mean"].item(),
-        label_stats["std"].item(),
-        label_stats["min"].item(),
-        label_stats["max"].item(),
-    )
+    target_transform = None
+    label_stats = {}
+    if should_target_transform:
+        # compute statistics for the single label
+        values = [
+            load_data(dataset, simulation_id, label_var)
+            for simulation_id in splits["train"]
+        ]
+        arr = np.array(values)
+        label_stats = {
+            "mean": torch.tensor(arr.mean()),
+            "std": torch.tensor(arr.std()),
+            "min": torch.tensor(arr.min()),
+            "max": torch.tensor(arr.max()),
+        }
+
+        target_transform = get_normalizer(
+            normalize,
+            label_stats["mean"].item(),
+            label_stats["std"].item(),
+            label_stats["min"].item(),
+            label_stats["max"].item(),
+        )
+
+    label_stats["splits"] = splits
 
     # build loaders for each split
     loaders: Dict[str, DataLoader] = {}

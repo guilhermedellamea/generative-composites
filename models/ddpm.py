@@ -121,17 +121,21 @@ class DDPM(nn.Module):
 
         if guide_weight > 0:
             conditions = torch.cat([conditions, conditions.flip(0)])
-            x = x.repeat(2, 1, 1, 1)
 
         sample_evolution = []
         timed_print("Sampling with DDPM...")
 
         for t in reversed(range(1, self.num_steps + 1)):
             if t % 50 == 0:
-                timed_print(f"Sampling step {t}...")
+                timed_print(f"Sampling step {t}")
 
-            t_tensor = torch.full((x.size(0),), t / self.num_steps, device=self.device)
+            t_tensor = torch.full(
+                (conditions.size(0),), t / self.num_steps, device=self.device
+            )
             z = torch.randn(n_samples, *image_shape).to(self.device) if t > 1 else 0
+
+            if guide_weight > 0:
+                x = x.repeat(2, 1, 1, 1)
 
             eps = self.model(x, conditions, t_tensor)
 
@@ -214,7 +218,7 @@ class DDPM_Damage(nn.Module):
             n_samples (int): Number of samples to generate.
             image_shape (tuple): Image shape.
             guide_weight (float): Strength of contrastive guidance.
-            context_extremes (tuple): Max and min heatmaps.
+            context_extremes (tuple): Range for condition values.
 
         Returns:
             Tuple[Tensor, np.ndarray]: Final samples and evolution over time.
@@ -227,24 +231,31 @@ class DDPM_Damage(nn.Module):
         x = torch.randn(n_samples, *image_shape).to(self.device)
         sample_evolution = []
 
-        context = torch.cat([context_extremes[0], context_extremes[1]], dim=0)
-        if context.shape[0] < n_samples:
-            context = context.repeat(n_samples // 2, 1)
-
         # Prepare masks for contrastive guidance
+        context = torch.stack(
+            [context_extremes[0].unsqueeze(0), context_extremes[1].unsqueeze(0)], dim=0
+        )  # shape: [2, 1, 512, 512]
+        # Repeat context for n_samples if n_samples > 2
+        if n_samples > 2:
+            context = context.repeat(n_samples // 2, 1, 1, 1)
+
         if guide_weight > 0:
-            damage_mask = torch.cat([context, context], dim=0)
-            x = x.repeat(2, 1, 1, 1)
+            context = torch.cat([context, context.flip(0)], dim=0)
 
         timed_print("Sampling with damage-aware DDPM...")
         for t in reversed(range(1, self.num_steps + 1)):
             if t % 50 == 0:
-                timed_print(f"Sampling step {t}...")
+                timed_print(f"Sampling step {t}")
 
-            t_tensor = torch.full((x.size(0),), t / self.num_steps, device=self.device)
+            t_tensor = torch.full(
+                (context.size(0),), t / self.num_steps, device=self.device
+            )
             z = torch.randn(n_samples, *image_shape).to(self.device) if t > 1 else 0
 
-            eps = self.model(x, t_tensor, damage_mask)
+            if guide_weight > 0:
+                x = x.repeat(2, 1, 1, 1)
+
+            eps = self.model(x, t_tensor, context.to(self.device))
 
             if guide_weight > 0:
                 eps_cond, eps_uncond = eps.chunk(2)

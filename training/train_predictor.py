@@ -40,7 +40,7 @@ class PredictorTrainer:
             self.label_var = "Ey"  # Target is Young's modulus
             normalize = "mean_std"
         elif self.args.dataset == "dataset_damage":
-            self.label_var = "energy_when_broken_Y"  # Target is toughness
+            self.label_var = "toughness"  # Target is toughness
             normalize = "negative_mean_std"
         else:
             raise ValueError(f"Unsupported dataset: {self.args.dataset}")

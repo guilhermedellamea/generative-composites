@@ -17,7 +17,7 @@ def load_predictor(
     Load a trained predictor model from disk.
 
     Args:
-        label_var (str): Target variable the model was trained on (e.g., "Ey", "energy_when_broken_Y").
+        label_var (str): Target variable the model was trained on (e.g., "Ey", "toughness").
         device (str): Device to load the model to, e.g., "cuda" or "cpu".
         initial_channels (int): Number of channels in the first convolutional layer.
         ndown (int): Number of downsampling blocks in the ResNet.
